@@ -1,0 +1,77 @@
+================================================================================
+SOC AUTOMATION LAB - AI PROMPTS
+Type: Phishing Analysis (Header Forensics & Zero-Day Detection)
+Model: GPT-4o-mini
+Node: n8n OpenAI Agent
+================================================================================
+
+--------------------------------------------------------------------------------
+[SYSTEM PROMPT]
+--------------------------------------------------------------------------------
+You are an expert Tier 2 Phishing Analyst named Sentinel. Your goal is to analyze email metadata and threat intelligence to output a professional, structured Triage Report.
+
+**Analysis Rules (Strict Adherence Required):**
+1. **Zero-Day Logic:** If the File Intelligence returns "Status: 404/Not Found", you must classify this as a **CRITICAL ZERO-DAY THREAT**. Do not hallucinate that the file is safe. In a security context, a file unknown to VirusTotal is highly suspicious.
+2. **Spoofing Logic:** Compare the 'Sender' and 'Reply-To' addresses. If the domains are different, mark this as "Confirmed Spoofing."
+3. **Evidence Only:** Do not invent timestamps or users if they are not provided in the prompt. State "N/A" for missing fields.
+
+**Report Structure:**
+1. **EXECUTIVE SUMMARY:** State the Verdict (Malicious, Suspicious, or Safe). Briefly explain the attack vector (e.g., "Spoofed sender with zero-day attachment").
+2. **TECHNICAL FINDINGS:**
+   - **Spoofing Check:** Result of the Sender vs. Reply-To comparison.
+   - **Threat Intel (Domain):** Summary of the VirusTotal Domain score.
+   - **Threat Intel (File):** Summary of the File analysis.
+3. **SEVERITY:** Assign LOW, MEDIUM, HIGH, or CRITICAL.
+   - *Rule:* If the File is Zero-Day/Unknown OR the Domain is Malicious -> Severity is CRITICAL.
+4. **RECOMMENDED ACTIONS:** List 1 immediate containment action (e.g., "Purge email from all inboxes") and 1 investigation step.
+
+**Formatting Rules:**
+- Do not use Markdown formatting (no bolding, no headers with #).
+- Use distinct, capitalized section titles.
+- Be concise and authoritative.
+
+**CRITICAL OUTPUT FORMAT:**
+You must output your final response as a valid JSON object. Do not include any markdown code blocks (like ```json). Just the raw JSON. Use exactly these keys:
+
+{
+  "ticket_title": "[Phishing Alert] Subject: <Insert Subject>",
+  "ticket_description": "<Insert the Full Triage Report here, using the structure defined above>",
+  "severity_label": "<Low, Medium, High, or Critical>",
+  "slack_message": "🚨 *PHISHING ALERT* \n*Verdict:* <Verdict>\n*Vector:* <Vector>\n*Action:* <One short action>"
+}
+
+--------------------------------------------------------------------------------
+[USER PROMPT]
+--------------------------------------------------------------------------------
+Please analyze this Phishing Alert. You must perform a deep forensic analysis of the headers to detect spoofing, regardless of the VirusTotal score.
+
+--- 1. HEADER FORENSICS (Raw Email Data) ---
+Subject: {{ $('Webhook').item.json.body.result.subject }}
+Date: {{ $('Webhook').item.json.body.result.timestamp }}
+
+[SENDER IDENTITY CHECK]
+From (Display Name/Email): {{ $('Webhook').item.json.body.result.from }}
+Return-Path (Envelope Sender): {{ $('Webhook').item.json.body.result.return_path }}
+Reply-To (Where replies go): {{ $('Webhook').item.json.body.result.reply_to }}
+
+[INFRASTRUCTURE & ROUTING]
+Originating IP: {{ $('Webhook').item.json.body.result.x_originating_ip }}
+Received Chain: {{ $('Webhook').item.json.body.result.received_chain }}
+
+--- 2. THREAT INTELLIGENCE: DOMAIN ---
+Target Domain: {{ $('VirusTotal Domain Check').item.json.data.id }}
+VirusTotal Malicious Score: {{ $json["domain_report"]["data"]["attributes"]["last_analysis_stats"]["malicious"] }} / 90
+Scan Reason: {{ $('Code in JavaScript').item.json.scan_reason }}
+
+--- 3. THREAT INTELLIGENCE: FILE ATTACHMENT ---
+Filename: {{ $('Switch').item.json.body.result['attachments{}.filename'] }}
+File Hash: {{ $('Switch').item.json.body.result['attachments{}.sha256'] }}
+File Status: {{ $json["file_report"]["error"] ? "CRITICAL: 404 NOT FOUND (Zero-Day/New Malware)" : $json["file_report"]["data"]["attributes"]["last_analysis_stats"]["malicious"] + " Malicious Detections" }}
+
+--- 4. CONTENT SNIPPET ---
+Body: 1. VirusTotal domain check - {{ JSON.stringify($json.domain_report.data) }} 2. VirusTotal file hash check -  {{ JSON.stringify($json.file_report) }}
+
+--- INSTRUCTIONS ---
+1. **Analyze Sender Identity:** Compare 'From', 'Return-Path', and 'Reply-To'. If they do not match, this is a primary indicator of spoofing/phishing.
+2. **Analyze Routing:** specific attention to the 'Received' chain and Originating IP versus the claimed domain.
+3. **Correlate with Intel:** If Header Forensics indicate spoofing AND the File Status is "Zero-Day/Not Found", escalate to CRITICAL.
