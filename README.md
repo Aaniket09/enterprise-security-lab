@@ -136,7 +136,6 @@ To handle non-standard Postfix logs, I developed a Python log parser located on 
 
 ## 📂 Repository Structure
 * `/n8n_workflows` - JSON exports of the automation logic.
-* `/splunk_rules` - SPL queries for Phishing, Brute Force, and Lateral Movement.
-* `/sysmon_config` - XML configuration used to capture Process Creation (Event 1).
+* `/splunk_queries` - SPL queries for Phishing, Brute Force, and Lateral Movement.
 * `/scripts` - Python email log parser.
 * `/prompts` - System and User prompts used for GPT-4o analysis.
