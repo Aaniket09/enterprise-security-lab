@@ -1,0 +1,764 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "REDACTED_WEBHOOK_ID",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -224,
+        400
+      ],
+      "id": "aa9f089e-2b72-4f30-a3fa-20c48ea67538",
+      "name": "Webhook",
+      "webhookId": "REDACTED_WEBHOOK_ID"
+    },
+    {
+      "parameters": {
+        "url": "https://api.abuseipdb.com/api/v2/check",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "ipAddress",
+              "value": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('parameters0_Value', ``, 'string') }}"
+            },
+            {
+              "name": "maxAgeInDays",
+              "value": "1"
+            },
+            {
+              "name": "verbose"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Key",
+              "value": "REDACTED_API_KEY"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequestTool",
+      "typeVersion": 4.3,
+      "position": [
+        1200,
+        528
+      ],
+      "id": "95dfeaf4-63cf-4bd7-92da-b2c0bfd427e6",
+      "name": "AbuseIPDB-Enrichment"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.body.search_name }}",
+                    "rightValue": "Phishing",
+                    "operator": {
+                      "type": "string",
+                      "operation": "contains"
+                    },
+                    "id": "87ea4c96-e0bf-42e0-9bd8-1f5fe4b64ce7"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Phishing"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "a834c3fc-440b-4bbf-b4c1-3798a3b58583",
+                    "leftValue": "={{ $json.body.search_name }}",
+                    "rightValue": "Brute",
+                    "operator": {
+                      "type": "string",
+                      "operation": "contains"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Brute Force"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "e91ee65c-2d98-479b-a0c3-fa8287a196de",
+                    "leftValue": "={{ $json.body.search_name }}",
+                    "rightValue": "Lateral",
+                    "operator": {
+                      "type": "string",
+                      "operation": "contains"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Lateral Movement"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.3,
+      "position": [
+        0,
+        384
+      ],
+      "id": "90b8879e-a8ea-4c95-a7c6-78a9612ea596",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.item.json;\n\n// --- STEP 1: FIND THE DATA ---\n// Check if data is at the top level OR inside body.result\nlet data = item;\nif (item.body && item.body.result) {\n    data = item.body.result;\n}\n\n// --- STEP 2: DEFINE EXTRACTION FUNCTION ---\nconst getDomain = (emailStr) => {\n  // 1. Safety Check: Is it empty?\n  if (!emailStr || typeof emailStr !== 'string') return null;\n  \n  // 2. Regex: Find anything that looks like user@domain.com\n  const match = emailStr.match(/([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\\.[a-zA-Z0-9._-]+)/);\n  \n  // 3. Extract the domain part (after the @)\n  if (match && match[1]) {\n      return match[1].split('@')[1];\n  }\n  return null;\n};\n\n// --- STEP 3: EXTRACT DOMAINS ---\n// We read from the 'data' variable we found in Step 1\nconst fromDomain = getDomain(data.from);\nconst returnDomain = getDomain(data.return_path);\nconst replyDomain = getDomain(data.reply_to);\n\n// --- STEP 4: DECISION LOGIC ---\nlet domainToScan = fromDomain; // Default\nlet scanReason = \"Standard Sender Check (From)\";\n\n// Priority 1: Reply-To Mismatch\nif (data.is_bad_reply === \"true\" && replyDomain) {\n    domainToScan = replyDomain;\n    scanReason = \"Suspicious Reply-To Mismatch\";\n} \n// Priority 2: Spoofing\nelse if (data.is_spoof === \"true\" && returnDomain) {\n    domainToScan = returnDomain;\n    scanReason = \"Spoofed Origin (Return-Path)\";\n}\n\n// --- STEP 5: OUTPUT ---\nreturn {\n    json: {\n        domain_for_vt: domainToScan,\n        scan_reason: scanReason,\n        // Debugging (Should show values now!)\n        debug_found_data_at: (item.body && item.body.result) ? \"body.result\" : \"root\",\n        debug_raw_reply: data.reply_to,\n        ...data // Return the flattened data so next nodes can see it easily\n    }\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        80
+      ],
+      "id": "9f07f7ad-b969-4cb4-ba5f-5a320856a386",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "url": "=https://www.virustotal.com/api/v3/domains/{{ $json[\"domain_for_vt\"] }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        448,
+        -16
+      ],
+      "id": "42d372bf-e34f-497d-a8a9-aa254c48fcf7",
+      "name": "VirusTotal Domain Check",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "9iSGqba5daPs8jsa",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://www.virustotal.com/api/v3/ip_addresses/{{ $json.body.result.Threat_Sim_IP }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        896,
+        400
+      ],
+      "id": "8caa3e31-c8d5-4cbd-b063-00fcb52d131f",
+      "name": "VirusTotal IP Check",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "9iSGqba5daPs8jsa",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        896,
+        80
+      ],
+      "id": "323c9672-9a29-436f-9263-ec0bd570daf6",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cb453a2d-356d-460f-b19c-278a594544a4",
+              "name": "=domain_report",
+              "value": "={{ $json }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        672,
+        -16
+      ],
+      "id": "be5cb553-2907-481f-b7bb-f976c8e67e12",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "440fa109-58f5-4d41-9797-86d23bd6fcca",
+              "name": "file_report",
+              "value": "={{ $json }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        672,
+        176
+      ],
+      "id": "82f1a089-80b2-4f61-ad43-eb9c36b6b931",
+      "name": "Edit Fields1"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4.1-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4.1-MINI"
+        },
+        "responses": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are an expert Tier 2 Phishing Analyst named Sentinel. Your goal is to analyze email metadata and threat intelligence to output a professional, structured Triage Report.\n\n**Analysis Rules (Strict Adherence Required):**\n1. **Zero-Day Logic:** If the File Intelligence returns \"Status: 404/Not Found\", you must classify this as a **CRITICAL ZERO-DAY THREAT**. Do not hallucinate that the file is safe. In a security context, a file unknown to VirusTotal is highly suspicious.\n2. **Spoofing Logic:** Compare the 'Sender' and 'Reply-To' addresses. If the domains are different, mark this as \"Confirmed Spoofing.\"\n3. **Evidence Only:** Do not invent timestamps or users if they are not provided in the prompt. State \"N/A\" for missing fields.\n\n**Report Structure:**\n1. **EXECUTIVE SUMMARY:** State the Verdict (Malicious, Suspicious, or Safe). Briefly explain the attack vector (e.g., \"Spoofed sender with zero-day attachment\").\n2. **TECHNICAL FINDINGS:**\n   - **Spoofing Check:** Result of the Sender vs. Reply-To comparison.\n   - **Threat Intel (Domain):** Summary of the VirusTotal Domain score.\n   - **Threat Intel (File):** Summary of the File analysis.\n3. **SEVERITY:** Assign LOW, MEDIUM, HIGH, or CRITICAL.\n   - *Rule:* If the File is Zero-Day/Unknown OR the Domain is Malicious -> Severity is CRITICAL.\n4. **RECOMMENDED ACTIONS:** List 1 immediate containment action (e.g., \"Purge email from all inboxes\") and 1 investigation step.\n\n**Formatting Rules:**\n- Do not use Markdown formatting (no bolding, no headers with #).\n- Use distinct, capitalized section titles.\n- Be concise and authoritative.\n\n**CRITICAL OUTPUT FORMAT:**\nYou must output your final response as a valid JSON object. Do not include any markdown code blocks (like ```json). Just the raw JSON. Use exactly these keys:\n\n{\n  \"ticket_title\": \"[Phishing Alert] Subject: <Insert Subject>\",\n  \"ticket_description\": \"<Insert the Full Triage Report here, using the structure defined above>\",\n  \"severity_label\": \"<Low, Medium, High, or Critical>\",\n  \"slack_message\": \"🚨 *PHISHING ALERT* \\n*Verdict:* <Verdict>\\n*Vector:* <Vector>\\n*Action:* <One short action>\"\n}"
+            },
+            {
+              "content": "=Please analyze this Phishing Alert. You must perform a deep forensic analysis of the headers to detect spoofing, regardless of the VirusTotal score.\n\n\n\n--- 1. HEADER FORENSICS (Raw Email Data) ---\n\nSubject: {{ $('Webhook').item.json.body.result.subject }}\n\nDate: {{ $('Webhook').item.json.body.result.timestamp }}\n\n\n\n[SENDER IDENTITY CHECK]\n\nFrom (Display Name/Email): {{ $('Webhook').item.json.body.result.from }}\n\nReturn-Path (Envelope Sender): {{ $('Webhook').item.json.body.result.return_path }}\n\nReply-To (Where replies go): {{ $('Webhook').item.json.body.result.reply_to }}\n\n\n\n[INFRASTRUCTURE & ROUTING]\n\nOriginating IP: {{ $('Webhook').item.json.body.result.x_originating_ip }}\n\nReceived Chain: {{ $('Webhook').item.json.body.result.received_chain }}\n\n\n\n--- 2. THREAT INTELLIGENCE: DOMAIN ---\n\nTarget Domain: {{ $('VirusTotal Domain Check').item.json.data.id }}\n\nVirusTotal Malicious Score: {{ $json[\"domain_report\"][\"data\"][\"attributes\"][\"last_analysis_stats\"][\"malicious\"] }} / 90\n\nScan Reason: {{ $('Code in JavaScript').item.json.scan_reason }}\n\n\n\n--- 3. THREAT INTELLIGENCE: FILE ATTACHMENT ---\n\nFilename: {{ $('Switch').item.json.body.result['attachments{}.filename'] }}\n\nFile Hash: {{ $('Switch').item.json.body.result['attachments{}.sha256'] }}\n\nFile Status: {{ $json[\"file_report\"][\"error\"] ? \"CRITICAL: 404 NOT FOUND (Zero-Day/New Malware)\" : $json[\"file_report\"][\"data\"][\"attributes\"][\"last_analysis_stats\"][\"malicious\"] + \" Malicious Detections\" }}\n\n\n\n--- 4. CONTENT SNIPPET ---\n\nBody: 1. VirusTotal domain check - {{ JSON.stringify($json.domain_report.data) }} 2. VirusTotal file hash check -  {{ JSON.stringify($json.file_report) }}\n\n\n\n--- INSTRUCTIONS ---\n\n1. **Analyze Sender Identity:** Compare 'From', 'Return-Path', and 'Reply-To'. If they do not match, this is a primary indicator of spoofing/phishing.\n\n2. **Analyze Routing:** specific attention to the 'Received' chain and Originating IP versus the claimed domain.\n\n3. **Correlate with Intel:** If Header Forensics indicate spoofing AND the File Status is \"Zero-Day/Not Found\", escalate to CRITICAL."
+            }
+          ]
+        },
+        "simplify": "={{ true }}",
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.1,
+      "position": [
+        1120,
+        80
+      ],
+      "id": "a35aea9b-f795-4dc8-8385-867174a15f6d",
+      "name": "Phishing Analysis",
+      "executeOnce": false,
+      "credentials": {
+        "openAiApi": {
+          "id": "cxjCXFmwDp9u38Xu",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// 1. Get the text content from the nested structure\n// We check a few common paths to be safe\nconst item = $input.item.json;\nlet gptContent = \"\";\n\nif (item.output && item.output[0] && item.output[0].content && item.output[0].content[0]) {\n    // This matches the structure you just pasted\n    gptContent = item.output[0].content[0].text;\n} else if (item.message && item.message.content) {\n    // Fallback for standard OpenAI structure\n    gptContent = item.message.content;\n}\n\n// 2. Clean the text (remove markdown fences)\nconst cleanText = gptContent\n    .replace(/```json/g, \"\")\n    .replace(/```/g, \"\")\n    .trim();\n\ntry {\n    // 3. Parse the string into a real JSON object\n    const parsed = JSON.parse(cleanText);\n    \n    // 4. Return the new object merged with original data\n    return {\n        json: {\n            ...parsed, \n            original_alert_id: $input.item.json.id\n        }\n    };\n} catch (error) {\n    // 5. Fallback if parsing fails\n    return {\n        json: {\n            ticket_title: \"Error Parsing GPT Output\",\n            ticket_description: \"Raw GPT Output: \" + gptContent,\n            severity_label: \"High\", \n            slack_message: \"⚠️ GPT Analysis Failed to Parse. Check Jira for details.\"\n        }\n    };\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1472,
+        80
+      ],
+      "id": "f7702e0a-e10f-4565-9c6e-5deb8e80db59",
+      "name": "Parse GPT JSON"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// 1. Get the text content from the nested structure\n// We check a few common paths to be safe\nconst item = $input.item.json;\nlet gptContent = \"\";\n\nif (item.output && item.output[0] && item.output[0].content && item.output[0].content[0]) {\n    // This matches the structure you just pasted\n    gptContent = item.output[0].content[0].text;\n} else if (item.message && item.message.content) {\n    // Fallback for standard OpenAI structure\n    gptContent = item.message.content;\n}\n\n// 2. Clean the text (remove markdown fences)\nconst cleanText = gptContent\n    .replace(/```json/g, \"\")\n    .replace(/```/g, \"\")\n    .trim();\n\ntry {\n    // 3. Parse the string into a real JSON object\n    const parsed = JSON.parse(cleanText);\n    \n    // 4. Return the new object merged with original data\n    return {\n        json: {\n            ...parsed, \n            original_alert_id: $input.item.json.id\n        }\n    };\n} catch (error) {\n    // 5. Fallback if parsing fails\n    return {\n        json: {\n            ticket_title: \"Error Parsing GPT Output\",\n            ticket_description: \"Raw GPT Output: \" + gptContent,\n            severity_label: \"High\", \n            slack_message: \"⚠️ GPT Analysis Failed to Parse. Check Jira for details.\"\n        }\n    };\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1472,
+        400
+      ],
+      "id": "0dfebad2-c033-41e5-a8f7-5b38c74f94ca",
+      "name": "Parse GPT JSON2"
+    },
+    {
+      "parameters": {
+        "project": {
+          "__rl": true,
+          "value": "10001",
+          "mode": "list",
+          "cachedResultName": "SOC Operations"
+        },
+        "issueType": {
+          "__rl": true,
+          "value": "10009",
+          "mode": "list",
+          "cachedResultName": "Incident"
+        },
+        "summary": "={{ $json.ticket_title }}",
+        "additionalFields": {
+          "description": "={{ $json.ticket_description }}",
+          "priority": {
+            "__rl": true,
+            "value": "={{ $json.severity_label === 'Critical' ? '1' : '2' }}",
+            "mode": "id"
+          }
+        }
+      },
+      "type": "n8n-nodes-base.jira",
+      "typeVersion": 1,
+      "position": [
+        1696,
+        400
+      ],
+      "id": "b113dca8-6b45-4dd8-9a34-3ce44fcb4eb5",
+      "name": "Create Jira Ticket",
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "QGjHmuDkGK1Vhwtw",
+          "name": "Jira SW Cloud account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4.1-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4.1-MINI"
+        },
+        "responses": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are an expert Tier 1 Security Operations Center Analyst named Sentinel. Your goal is to analyze raw security alerts combined with automated threat intelligence to output a professional, structured Triage Report.\n\n**Analysis Workflow:**\n1. **Correlate Data:** Compare the \"Raw Alert Data\" against the \"Automated Threat Intel\" provided in the prompt.\n   - If the provided VirusTotal score confirms malicious activity, cite this immediately.\n   - **Tool Usage:** If the VirusTotal score is clean/missing, OR if you identify *secondary* IP addresses in the raw logs that were not part of the initial scan, you must use the 'AbuseIPDB-Enrichment' tool to gather fresh context.\n\n2. **Executive Summary:** Clearly state the trigger. List the \"Affected Scope\" (Hostnames, Users, IPs). Briefly describe the nature of the threat (e.g., \"Confirmed Malicious Brute Force\" or \"False Positive Scanner\").\n\n3. **Enrichment Analysis:** Summarize the findings from VirusTotal and any AbuseIPDB tool calls.\n   - Format: \"Source IP [IP_ADDR] - VirusTotal: [X]/90 Malicious. AbuseIPDB: [Confidence Score]%.\"\n\n4. **Severity & MITRE Mapping:**\n   - Map to MITRE ATT&CK Tactic & Technique ID.\n   - Assign Severity (LOW, MEDIUM, HIGH, CRITICAL).\n   - *Rule:* If VirusTotal Malicious score > 2, Severity must be at least HIGH.\n\n5. **Response Recommendations:** List 3 specific technical investigation questions and 1 immediate containment action (e.g., \"Block IP [X] on Firewall\").\n\n**Formatting Rules:**\n- Do not use Markdown formatting (no bolding, no headers with #).\n- Use distinct, capitalized section titles (e.g., EXECUTIVE SUMMARY).\n- Use plain text lists.\n- If data is missing, state \"Missing Data.\"\n- Be concise and professional.\n\n**CRITICAL OUTPUT FORMAT:**\nYou must output your final response as a valid JSON object. Do not include any markdown code blocks. Just the raw JSON. Use exactly these keys:\n\n{\n  \"ticket_title\": \"[SOC Alert] Brute Force Detected on <Target Host>\",\n  \"ticket_description\": \"<Insert the Full Triage Report here, using the structure defined above>\",\n  \"severity_label\": \"<Low, Medium, High, or Critical>\",\n  \"slack_message\": \"🚨 *BRUTE FORCE ALERT* \\n*Target:* <Target Host>\\n*Source:* <Attacker IP>\\n*Status:* <Active/Blocked>\"\n}"
+            },
+            {
+              "content": "=Please analyze this security alert using the provided datasets.\n\n--- 1. RAW ALERT DATA (From Splunk) ---\nAlert Name: {{ $('Webhook').item.json.body.search_name }}\nLog Details: {{ JSON.stringify($('Webhook').item.json.body.result, null, 2) }}\n\n--- 2. AUTOMATED THREAT INTEL (From VirusTotal) ---\nAnalysis Object: {{ $json.data.id }}\nMalicious Score: {{ $json.data.attributes.last_analysis_stats.malicious }} / 90\nHarmless Score: {{ $json.data.attributes.last_analysis_stats.harmless }}\nReputation Tags: {{ $json.data.attributes.reputation }}\n\n--- INSTRUCTIONS ---\nAnalyze the Raw Alert in context with the VirusTotal score.\n1. If the VirusTotal \"Malicious\" score is > 0, treat this as a high-confidence threat.\n2. If the VirusTotal score is 0 or inconclusive, or if you see *different* IPs in the \"Log Details\" that were not scanned, use your **AbuseIPDB** tool to investigate further."
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.1,
+      "position": [
+        1120,
+        304
+      ],
+      "id": "e9b127d3-fc3f-4932-9536-0ab189b49165",
+      "name": "Brute Force Login Analysis",
+      "credentials": {
+        "openAiApi": {
+          "id": "cxjCXFmwDp9u38Xu",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://www.virustotal.com/api/v3/files/{{ $json[\"attachments{}.sha256\"] }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        448,
+        176
+      ],
+      "id": "3b5a010f-3cf0-40a9-b5ed-afebcabee02a",
+      "name": "VirusTotal File Hash Check",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "9iSGqba5daPs8jsa",
+          "name": "Header Auth account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0A26LPCZ45",
+          "mode": "list",
+          "cachedResultName": "alerts"
+        },
+        "text": "={{ $json.slack_message }}\n\n*Ticket Created:* <https://aniket-soc-lab.atlassian.net/browse/{{ $json.key }}|{{ $json.key }}>",
+        "otherOptions": {
+          "mrkdwn": true,
+          "unfurl_links": false
+        }
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        2144,
+        400
+      ],
+      "id": "c88e9ae3-8b84-4909-8218-f4d252dcac09",
+      "name": "Send Slack message",
+      "webhookId": "REDACTED_SLACK_WEBHOOK_ID",
+      "credentials": {
+        "slackApi": {
+          "id": "hn1G6PZl3gxOhqPl",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// LIST OF YOUR PARSE NODES\n// As you add Path 3, Path 4, just add their names here.\nconst possibleSources = [\n  'Parse GPT JSON',     // Path 1\n  'Parse GPT JSON2',\n  'Parse GPT JSON3'\n];\n\nlet slackMsg = \"⚠️ Alert Details Missing\";\nlet severity = \"High\";\n\n// LOOP TO FIND THE ACTIVE PATH\nfor (const nodeName of possibleSources) {\n  try {\n    // We try to grab the output of the node.\n    // If the node didn't run, n8n throws an error, which we catch and ignore.\n    const nodeData = $(nodeName).first().json;\n    \n    if (nodeData && nodeData.slack_message) {\n      slackMsg = nodeData.slack_message;\n      severity = nodeData.severity_label;\n      break; // Found it! Stop looking.\n    }\n  } catch (error) {\n    // This path didn't run, so check the next one.\n    continue;\n  }\n}\n\n// MERGE WITH JIRA TICKET INFO\nconst jiraData = $input.item.json;\n\nreturn {\n    json: {\n        slack_message: slackMsg,\n        severity_label: severity,\n        ...jiraData // Contains key, id, self\n    }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        400
+      ],
+      "id": "ccd00bdc-d7fa-4d6a-bba8-97a7c4779338",
+      "name": "Get Slack Message"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4.1-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4.1-MINI"
+        },
+        "responses": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are an expert Tier 2 SOC Analyst named Sentinel. Your goal is to analyze internal system logs for signs of Lateral Movement and output a professional, structured Triage Report.\n\n**Analysis Rules (Strict Adherence Required):**\n1. **The Impacket Signature:** If the 'Parent Image' is a random, non-standard executable (e.g., \"GASLeSec.exe\", \"MGEykOHq.exe\", \"iFZVpKak.exe\") OR exactly \"PSEXESVC.exe\" residing in the C:\\Windows\\ directory, you must classify this as **CONFIRMED MALICIOUS ACTIVITY** (Impacket/PsExec usage).\n2. **Privilege Check:** If the 'User' is \"NT AUTHORITY\\SYSTEM\" and the command line is launching a shell (\"cmd.exe\" or \"powershell.exe\"), this indicates a high-privilege system compromise.\n3. **Context Logic:** Legitimate services rarely spawn interactive command shells directly from the Windows root directory. If you see this behavior, treat it as a confirmed T1021 (Remote Services) attack.\n\n**Report Structure:**\n1. **EXECUTIVE SUMMARY:** State the Verdict (Confirmed Lateral Movement, Suspicious, or False Positive). Identify the Attack Tool likely used (e.g., \"Impacket PsExec\" or \"Standard PsExec\").\n2. **TECHNICAL FINDINGS:**\n   - **Attack Vector:** Identify the suspicious Parent Process Name and Path.\n   - **Privilege Level:** Confirm the user context (e.g., SYSTEM).\n   - **Command Analysis:** Analyze the child process command line for intent.\n3. **SEVERITY:** Assign LOW, MEDIUM, HIGH, or CRITICAL.\n   - *Rule:* If a random service spawned a shell as SYSTEM -> Severity is CRITICAL.\n4. **RECOMMENDED ACTIONS:** List 1 immediate containment action (e.g., \"Isolate Host [HostName] immediately\") and 1 investigation step (e.g., \"Check for other hosts accessed by this service account\").\n\n**Formatting Rules:**\n- Do not use Markdown formatting (no bolding, no headers with #).\n- Use distinct, capitalized section titles.\n- Be concise and authoritative.\n\n**CRITICAL OUTPUT FORMAT:**\nYou must output your final response as a valid JSON object. Do not include any markdown code blocks (like ```json). Just the raw JSON. Use exactly these keys:\n\n{\n  \"ticket_title\": \"[Lateral Movement] <Parent_Process> spawned cmd.exe on <Host>\",\n  \"ticket_description\": \"<Insert the Full Triage Report here, using the structure defined above>\",\n  \"severity_label\": \"<Low, Medium, High, or Critical>\",\n  \"slack_message\": \"🚨 *LATERAL MOVEMENT DETECTED* \\n*Host:* <Host>\\n*User:* <User>\\n*Technique:* Remote Service Execution (Impacket)\\n*Parent:* <Parent_Process>\"\n}"
+            },
+            {
+              "content": "=Please analyze this Lateral Movement Alert. You must perform a deep behavioral analysis of the process tree to confirm malicious intent.\n\n--- 1. SYSTEM PROCESS FORENSICS (Raw Splunk Data) ---\nTimestamp: {{ $('Webhook').item.json.body.result._time }}\nTarget Host: {{ $('Webhook').item.json.body.result.Computer }}\nUser Account: {{ $('Webhook').item.json.body.result.User }}\n\n[PARENT PROCESS - THE INSTIGATOR]\nParent Image Path: {{ $('Webhook').item.json.body.result.ParentImage }}\nParent Command Line: {{ $('Webhook').item.json.body.result.ParentCommandLine }}\n\n[CHILD PROCESS - THE PAYLOAD]\nChild Image Name: {{ $('Webhook').item.json.body.result.Image }}\nChild Command Line: {{ $('Webhook').item.json.body.result.CommandLine }}\nExecution Directory: {{ $('Webhook').item.json.body.result.CurrentDirectory }}\nFile Hashes: {{ $('Webhook').item.json.body.result.Hashes }}\n\n--- INSTRUCTIONS ---\n1. **Analyze Parent Process:** Examine the 'Parent Image Path'. If the file name appears random (e.g., \"iFZVpKak.exe\", \"MGEykOHq.exe\") OR matches \"PSEXESVC.exe\" and resides in \"C:\\Windows\\\", this is the primary indicator of Impacket/PsExec.\n2. **Analyze User Context:** Verify if the 'User Account' is \"NT AUTHORITY\\SYSTEM\". High-privilege execution is a key requirement for this attack type.\n3. **Verdict Logic:**\n   - Random Parent Name + SYSTEM User = **CRITICAL** (Impacket Lateral Movement).\n   - \"services.exe\" Parent + SYSTEM User = **HIGH** (Standard PsExec).\n   - Any other combination = **SUSPICIOUS** (Requires manual review)."
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.1,
+      "position": [
+        1120,
+        704
+      ],
+      "id": "d8b47080-7c96-4a16-b8d3-82b248c510e3",
+      "name": "Lateral Movement Analysis",
+      "credentials": {
+        "openAiApi": {
+          "id": "cxjCXFmwDp9u38Xu",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// 1. Get the text content from the nested structure\n// We check a few common paths to be safe\nconst item = $input.item.json;\nlet gptContent = \"\";\n\nif (item.output && item.output[0] && item.output[0].content && item.output[0].content[0]) {\n    // This matches the structure you just pasted\n    gptContent = item.output[0].content[0].text;\n} else if (item.message && item.message.content) {\n    // Fallback for standard OpenAI structure\n    gptContent = item.message.content;\n}\n\n// 2. Clean the text (remove markdown fences)\nconst cleanText = gptContent\n    .replace(/```json/g, \"\")\n    .replace(/```/g, \"\")\n    .trim();\n\ntry {\n    // 3. Parse the string into a real JSON object\n    const parsed = JSON.parse(cleanText);\n    \n    // 4. Return the new object merged with original data\n    return {\n        json: {\n            ...parsed, \n            original_alert_id: $input.item.json.id\n        }\n    };\n} catch (error) {\n    // 5. Fallback if parsing fails\n    return {\n        json: {\n            ticket_title: \"Error Parsing GPT Output\",\n            ticket_description: \"Raw GPT Output: \" + gptContent,\n            severity_label: \"High\", \n            slack_message: \"⚠️ GPT Analysis Failed to Parse. Check Jira for details.\"\n        }\n    };\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1472,
+        704
+      ],
+      "id": "6f938e99-6027-4060-9901-715f7119527b",
+      "name": "Parse GPT JSON3"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AbuseIPDB-Enrichment": {
+      "ai_tool": [
+        [
+          {
+            "node": "Brute Force Login Analysis",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "VirusTotal IP Check",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Lateral Movement Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "VirusTotal Domain Check",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "VirusTotal File Hash Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "VirusTotal IP Check": {
+      "main": [
+        [
+          {
+            "node": "Brute Force Login Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "VirusTotal Domain Check": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields1": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Phishing Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Phishing Analysis": {
+      "main": [
+        [
+          {
+            "node": "Parse GPT JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse GPT JSON": {
+      "main": [
+        [
+          {
+            "node": "Create Jira Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse GPT JSON2": {
+      "main": [
+        [
+          {
+            "node": "Create Jira Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Jira Ticket": {
+      "main": [
+        [
+          {
+            "node": "Get Slack Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Brute Force Login Analysis": {
+      "main": [
+        [
+          {
+            "node": "Parse GPT JSON2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "VirusTotal File Hash Check": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Slack Message": {
+      "main": [
+        [
+          {
+            "node": "Send Slack message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lateral Movement Analysis": {
+      "main": [
+        [
+          {
+            "node": "Parse GPT JSON3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse GPT JSON3": {
+      "main": [
+        [
+          {
+            "node": "Create Jira Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "2b6f8a0c-7801-48d7-9a35-d31cb72439f2",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "82df1d63f12e64653d1217426679fe680fc43d9ea1091ac37616e911d6a36a8d"
+  },
+  "id": "XEGE2NWTmbwDG5cK",
+  "tags": []
+}
