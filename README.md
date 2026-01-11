@@ -85,7 +85,8 @@ The SOAR pipeline routes alerts based on attack type. Each path utilizes specifi
 * **AI Analysis:** n8n sends the email headers to GPT-4o to check for Spoofing (Return-Path mismatches) and analyzes the body for urgency/coercion.
 * **Outcome:** Jira ticket created with "Phishing Verdict" and Severity.
 
-![Placeholder: Splunk Phishing Alert Query]
+<img width="2814" height="1239" alt="Screenshot 2026-01-11 171919" src="https://github.com/user-attachments/assets/e0dcdc44-1f7c-4b0c-b25f-5bf1f20f9f6c" />
+
 
 ### 2. Lateral Movement Pipeline (Impacket/PsExec)
 * **Attack Vector:** Using `impacket-psexec` to pivot from Kali to the Domain Controller as SYSTEM.
@@ -94,7 +95,8 @@ The SOAR pipeline routes alerts based on attack type. Each path utilizes specifi
 * **AI Analysis:** GPT-4o analyzes the Process Tree to confirm the "Random Parent + SYSTEM Child" signature, distinguishing it from legitimate administrative `services.exe` activity.
 * **Outcome:** Critical Alert sent to Slack with immediate "Isolate Host" recommendation.
 
-![Placeholder: n8n Lateral Movement Workflow Diagram]
+<img width="2810" height="1059" alt="Screenshot 2026-01-11 171731" src="https://github.com/user-attachments/assets/eefba60f-91eb-4901-b24b-75458df08fa6" />
+
 
 ### 3. Brute Force Pipeline
 * **Attack Vector:** RDP/SMB password spraying against AD-DC-01.
@@ -103,14 +105,15 @@ The SOAR pipeline routes alerts based on attack type. Each path utilizes specifi
 * **AI Analysis:** n8n enriches the Source IP via AbuseIPDB (if external) or internal context (if local) to determine if it is a targeted attack or misconfiguration.
 * **Outcome:** Jira ticket created containing the Attacker IP and Target Account.
 
+<img width="2343" height="875" alt="Screenshot 2026-01-11 171548" src="https://github.com/user-attachments/assets/63c6f3df-cefa-453e-812d-442658168e85" />
+
+
 ## 🔧 Technology Stack & Configuration
 
 ### Splunk Enterprise (The Brain)
 * Configured Universal Forwarders on all endpoints (`inputs.conf`) to forward data to the Indexer (`192.168.163.132:9997`).
 * **Source Types:** `WinEventLog:Security`, `XmlWinEventLog:Microsoft-Windows-Sysmon/Operational`, and custom `email_json`.
 * **Alerting:** Configured Real-time Webhooks to trigger the n8n listener.
-
-![Placeholder: Splunk Data Inputs Dashboard]
 
 ### n8n Automation (The Muscle)
 * Hosted via Docker on Ubuntu 24.04.
@@ -123,7 +126,7 @@ The SOAR pipeline routes alerts based on attack type. Each path utilizes specifi
     5.  **Jira:** Create Issue (Task) with formatted description.
     6.  **Slack:** Post Block Kit message to `#soc-alerts`.
 
-![Placeholder: Final n8n Workflow Configuration]
+<img width="2568" height="1009" alt="Screenshot 2026-01-11 182824" src="https://github.com/user-attachments/assets/c15972bd-7ba6-48db-8368-1418443fd472" />
 
 ### Custom Tooling (Python)
 To handle non-standard Postfix logs, I developed a Python log parser located on the Email Server.
@@ -133,6 +136,8 @@ To handle non-standard Postfix logs, I developed a Python log parser located on 
 * **Reduced False Positives:** The AI analysis layer successfully distinguishes between standard PsExec (Admin) and randomized Impacket service names, preventing alert fatigue.
 * **Automated Triage:** Reduced Tier 1 analyst workload by automating the parsing, enrichment, and ticketing of alerts.
 * **Detection Fidelity:** Achieved 100% detection rate for simulated Kill Chain attacks within the lab environment.
+
+<img width="2702" height="1402" alt="Screenshot 2026-01-11 184314" src="https://github.com/user-attachments/assets/3996736c-74d4-4249-a0e4-25e8a07b5150" />
 
 ## 📂 Repository Structure
 * `/n8n_workflows` - JSON exports of the automation logic.
