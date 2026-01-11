@@ -1,0 +1,48 @@
+# ==============================================================================
+# SOC DETECTION RULES
+# Project: Enterprise Security Lab
+# Author: Aniket Agarwal
+# Description: Advanced SPL queries for Lateral Movement, Brute Force, and Phishing.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# ALERT 1: Lateral Movement (Impacket/PsExec Detection)
+# Description: Detects suspicious parent processes in C:\Windows (excluding System32)
+# spawning shells. This specifically targets tools like PSEXESVC or Impacket 
+# which often drop binaries into C:\Windows root.
+# ------------------------------------------------------------------------------
+index=* EventCode=1 
+(Image="*\\cmd.exe" OR Image="*\\powershell.exe") 
+ParentImage="C:\\Windows\\*.exe" 
+ParentImage!="C:\\Windows\\System32\\*" 
+ParentImage!="C:\\Windows\\SysWOW64\\*"
+| table _time, Computer, User, ParentImage, ParentCommandLine, Image, CommandLine, CurrentDirectory, Hashes
+
+# ------------------------------------------------------------------------------
+# ALERT 2: Brute Force Attempt (Time-Based Threshold)
+# Description: Detects >5 failed logins per user within a 5-minute window.
+# Captures both the Destination Host and the Source IP (Real_IP).
+# ------------------------------------------------------------------------------
+index=aniket-project EventCode=4625
+| bin _time span=5m
+| stats count values(ComputerName) as DestHost values(src_ip) as Real_IP by user, _time
+| where count > 5
+
+# ------------------------------------------------------------------------------
+# ALERT 3: Phishing Email Detection (Header Forensics)
+# Description: Analyzes JSON parsed email logs for:
+# 1. Spoofing (From != Return-Path)
+# 2. Mismatched Reply-To
+# 3. Suspicious Attachments (exe, scr, ps1, etc.)
+# ------------------------------------------------------------------------------
+index=aniket-project sourcetype=json_email 
+| eval from_clean=lower(replace('from', "^.*<|>", "")) 
+| eval return_clean=lower(replace('return_path', "^.*<|>", "")) 
+| eval reply_clean=lower(replace('reply_to', "^.*<|>", "")) 
+| eval is_spoof = if(from_clean != return_clean AND isnotnull(return_clean) AND return_clean != "null" AND return_clean != "", "true", "false") 
+| eval is_ip_injected = if(isnotnull(x_originating_ip) AND x_originating_ip != "null", "true", "false") 
+| eval is_bad_reply = if(isnotnull(reply_clean) AND reply_clean != "null" AND reply_clean != "" AND reply_clean != from_clean, "true", "false") 
+| eval is_malware = if(match('attachments{}.filename', "(?i)\.(exe|scr|pif|com|bat|cmd|ps1|vbs|js|jse|wsf|hta|jar|iso|img|vhd|lnk|docm|xlsm|pptm|one)$"), "true", "false") 
+| where is_spoof="true" OR is_ip_injected="true" OR is_bad_reply="true" OR is_malware="true" 
+| head 1
+| table timestamp, subject, from, return_path, reply_to, x_originating_ip, user_agent, priority, received_chain, body, attachments{}.filename, attachments{}.sha256
