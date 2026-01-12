@@ -1,4 +1,4 @@
-# AI-Driven SOC & SOAR Pipeline: Active Directory Detection Lab
+# AI-Driven SOC & SOAR Pipeline: Phishing, Brute-Force, and Lateral Movement Detection Lab
 
 ## 📖 Overview
 This project demonstrates a fully functional, on-premise Security Operations Center (SOC) and Security Orchestration, Automation, and Response (SOAR) pipeline.
